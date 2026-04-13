@@ -340,6 +340,40 @@ export async function authorizeSpotify(): Promise<void> {
   await authPromise;
 }
 
+export async function spotifyRawFetch(
+  endpoint: string,
+  params: Record<string, string | number | undefined> = {},
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+  body?: unknown,
+): Promise<unknown> {
+  await createSpotifyApi(); // ensures token is refreshed if needed
+  const config = loadSpotifyConfig();
+
+  const url = new URL(`https://api.spotify.com/v1${endpoint}`);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const response = await fetch(url.toString(), {
+    method,
+    headers: {
+      Authorization: `Bearer ${config.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Spotify API error ${response.status}: ${errorText}`);
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
 export function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60000);
   const seconds = ((ms % 60000) / 1000).toFixed(0);

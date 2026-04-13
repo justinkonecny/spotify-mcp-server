@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { albumTools } from './albums.js';
 import { artistTools } from './artists.js';
+import { discoverTools } from './discover.js';
 import { playTools } from './play.js';
 import { playlistTools } from './playlist.js';
 import { readTools } from './read.js';
@@ -12,7 +13,7 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
-[...readTools, ...playTools, ...albumTools, ...playlistTools, ...artistTools, ...userTools].forEach(
+[...readTools, ...playTools, ...albumTools, ...playlistTools, ...artistTools, ...userTools, ...discoverTools].forEach(
   (tool) => {
     server.tool(tool.name, tool.description, tool.schema, tool.handler);
   },
