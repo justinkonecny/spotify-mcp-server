@@ -670,14 +670,338 @@ const removeUsersSavedTracks: tool<{
   },
 };
 
+const getTrack: tool<{
+  trackId: z.ZodString;
+}> = {
+  name: 'getTrack',
+  description:
+    'Get detailed information about a specific track including artists, album, duration, and popularity',
+  schema: {
+    trackId: z.string().describe('The Spotify ID of the track'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { trackId } = args;
+
+    try {
+      const track = await handleSpotifyRequest(async (spotifyApi) => {
+        return await spotifyApi.tracks.get(trackId);
+      });
+
+      if (!isTrack(track)) {
+        return {
+          content: [{ type: 'text', text: 'Track not found or invalid ID' }],
+        };
+      }
+
+      const artists = track.artists.map((a) => a.name).join(', ');
+      const duration = formatDuration(track.duration_ms);
+      const releaseDate = (track as any).album?.release_date ?? 'N/A';
+      const trackNumber = (track as any).track_number ?? 'N/A';
+      const popularity = (track as any).popularity ?? 'N/A';
+      const explicit = (track as any).explicit ? 'Yes' : 'No';
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `# Track: "${track.name}"\n\n` +
+              `**Artist(s)**: ${artists}\n` +
+              `**Album**: ${track.album.name}\n` +
+              `**Released**: ${releaseDate}\n` +
+              `**Duration**: ${duration}\n` +
+              `**Track #**: ${trackNumber}\n` +
+              `**Popularity**: ${popularity}/100\n` +
+              `**Explicit**: ${explicit}\n` +
+              `**ID**: ${track.id}\n` +
+              `**URI**: spotify:track:${track.id}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error getting track: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        ],
+      };
+    }
+  },
+};
+
+const saveUsersTracks: tool<{
+  trackIds: z.ZodArray<z.ZodString>;
+}> = {
+  name: 'saveUsersTracks',
+  description:
+    'Save one or more tracks to the user\'s "Liked Songs" library (max 50 per request)',
+  schema: {
+    trackIds: z
+      .array(z.string())
+      .max(50)
+      .describe('Array of Spotify track IDs to save (max 50)'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { trackIds } = args;
+
+    if (trackIds.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'Error: No track IDs provided' }],
+      };
+    }
+
+    try {
+      await handleSpotifyRequest(async (spotifyApi) => {
+        await spotifyApi.currentUser.tracks.saveTracks(trackIds);
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Successfully saved ${trackIds.length} track${trackIds.length === 1 ? '' : 's'} to your Liked Songs`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error saving tracks: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        ],
+      };
+    }
+  },
+};
+
+const checkUsersSavedTracks: tool<{
+  trackIds: z.ZodArray<z.ZodString>;
+}> = {
+  name: 'checkUsersSavedTracks',
+  description:
+    'Check whether specific tracks are saved in the user\'s "Liked Songs" library',
+  schema: {
+    trackIds: z
+      .array(z.string())
+      .max(50)
+      .describe('Array of Spotify track IDs to check (max 50)'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { trackIds } = args;
+
+    if (trackIds.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'Error: No track IDs provided' }],
+      };
+    }
+
+    try {
+      const savedStatus = await handleSpotifyRequest(async (spotifyApi) => {
+        return await spotifyApi.currentUser.tracks.hasSavedTracks(trackIds);
+      });
+
+      const formatted = trackIds
+        .map((id, i) => `${id}: ${savedStatus[i] ? 'Saved' : 'Not saved'}`)
+        .join('\n');
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `# Liked Songs Status\n\n${formatted}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error checking saved tracks: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        ],
+      };
+    }
+  },
+};
+
+const searchWithFilters: tool<{
+  keyword: z.ZodOptional<z.ZodString>;
+  genre: z.ZodOptional<z.ZodString>;
+  artist: z.ZodOptional<z.ZodString>;
+  yearFrom: z.ZodOptional<z.ZodNumber>;
+  yearTo: z.ZodOptional<z.ZodNumber>;
+  tag: z.ZodOptional<z.ZodEnum<['hipster', 'new']>>;
+  type: z.ZodEnum<['track', 'album', 'artist', 'playlist']>;
+  limit: z.ZodOptional<z.ZodNumber>;
+}> = {
+  name: 'searchWithFilters',
+  description:
+    'Advanced Spotify search with genre, year, artist, and tag filters. Use genre: to discover music by style, year: for a specific era, tag:hipster for obscure/low-popularity tracks, tag:new for recent releases. Great for building targeted playlists.',
+  schema: {
+    keyword: z
+      .string()
+      .optional()
+      .describe('General text to search for (song name, partial artist, etc.)'),
+    genre: z
+      .string()
+      .optional()
+      .describe(
+        'Genre to filter by e.g. "indie-pop", "folk", "alt-country", "bedroom-pop". Use Spotify genre slugs.',
+      ),
+    artist: z
+      .string()
+      .optional()
+      .describe('Artist name to filter results by'),
+    yearFrom: z
+      .number()
+      .int()
+      .min(1900)
+      .max(2100)
+      .optional()
+      .describe('Start of year range (e.g. 2018)'),
+    yearTo: z
+      .number()
+      .int()
+      .min(1900)
+      .max(2100)
+      .optional()
+      .describe('End of year range (e.g. 2024)'),
+    tag: z
+      .enum(['hipster', 'new'])
+      .optional()
+      .describe(
+        'tag:hipster returns low-popularity/obscure tracks; tag:new returns recently released tracks',
+      ),
+    type: z
+      .enum(['track', 'album', 'artist', 'playlist'])
+      .describe('Type of item to search for'),
+    limit: z
+      .number()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe('Maximum number of results (1-50)'),
+  },
+  handler: async (args, _extra: SpotifyHandlerExtra) => {
+    const { keyword, genre, artist, yearFrom, yearTo, tag, type, limit = 20 } =
+      args;
+
+    const parts: string[] = [];
+    if (keyword) parts.push(keyword);
+    if (genre) parts.push(`genre:${genre}`);
+    if (artist) parts.push(`artist:${artist}`);
+    if (yearFrom !== undefined || yearTo !== undefined) {
+      const from = yearFrom ?? yearTo!;
+      const to = yearTo ?? yearFrom!;
+      parts.push(from === to ? `year:${from}` : `year:${from}-${to}`);
+    }
+    if (tag) parts.push(`tag:${tag}`);
+
+    if (parts.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Error: At least one filter must be provided',
+          },
+        ],
+      };
+    }
+
+    const query = parts.join(' ');
+
+    try {
+      const results = await handleSpotifyRequest(async (spotifyApi) => {
+        return await spotifyApi.search(
+          query,
+          [type],
+          undefined,
+          limit as MaxInt<50>,
+        );
+      });
+
+      let formatted = '';
+
+      if (type === 'track' && results.tracks) {
+        formatted = results.tracks.items
+          .map((track, i) => {
+            const artists = track.artists.map((a) => a.name).join(', ');
+            const duration = formatDuration(track.duration_ms);
+            const popularity = (track as any).popularity;
+            return `${i + 1}. "${track.name}" by ${artists} (${duration}) — Popularity: ${popularity} — ID: ${track.id}`;
+          })
+          .join('\n');
+      } else if (type === 'artist' && results.artists) {
+        formatted = results.artists.items
+          .map((a, i) => {
+            const genres = a.genres?.slice(0, 3).join(', ') ?? 'N/A';
+            return `${i + 1}. ${a.name} — Genres: ${genres} — Popularity: ${a.popularity} — ID: ${a.id}`;
+          })
+          .join('\n');
+      } else if (type === 'album' && results.albums) {
+        formatted = results.albums.items
+          .map((album, i) => {
+            const artists = album.artists.map((a) => a.name).join(', ');
+            return `${i + 1}. "${album.name}" by ${artists} (${album.release_date}) — ID: ${album.id}`;
+          })
+          .join('\n');
+      } else if (type === 'playlist' && results.playlists) {
+        formatted = results.playlists.items
+          .map((pl, i) => {
+            return `${i + 1}. "${pl?.name}" by ${pl?.owner?.display_name} — ID: ${pl?.id}`;
+          })
+          .join('\n');
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              formatted.length > 0
+                ? `# Search Results\nQuery: \`${query}\`\n\n${formatted}`
+                : `No results found for query: \`${query}\``,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error searching: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          },
+        ],
+      };
+    }
+  },
+};
+
 export const readTools = [
   searchSpotify,
+  searchWithFilters,
   getNowPlaying,
   getMyPlaylists,
   getPlaylistTracks,
   getRecentlyPlayed,
   getUsersSavedTracks,
   removeUsersSavedTracks,
+  saveUsersTracks,
+  checkUsersSavedTracks,
+  getTrack,
   getQueue,
   getAvailableDevices,
 ];
